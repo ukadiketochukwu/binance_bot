@@ -2,26 +2,27 @@ import ccxt
 from telegram import Update
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 
-api_key = ''
-api_secret = ''
+api_key = 'YOUR_API_KEY'
+api_secret = 'YOUR_API_SECRET'
 exchange = ccxt.binance({
     'apiKey': api_key,
     'secret': api_secret,
+    'options': {
+        'defaultType': 'future' 
+    }
 })
 
-
 TELEGRAM_TOKEN = ''
-
-
 user_state = {}
 
 def start(update: Update, context: CallbackContext) -> None:
     update.message.reply_text('Welcome! Use /trade to start trading.')
 
 def trade(update: Update, context: CallbackContext) -> None:
-    user_state[update.effective_user.id] = {}
+    user_id = update.effective_user.id
+    user_state[user_id] = {}
     update.message.reply_text('What coin/token would you like to trade? (e.g., BTC/USDT)')
-
+    
 def handle_coin(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     user_state[user_id]['coin'] = update.message.text
@@ -33,6 +34,7 @@ def spot(update: Update, context: CallbackContext) -> None:
     if not coin:
         update.message.reply_text('Please provide a coin/token first using /trade.')
         return
+    user_state[user_id]['type'] = 'spot'
     update.message.reply_text(f'Starting spot trade for {coin}. How much do you want to buy?')
 
 def futures(update: Update, context: CallbackContext) -> None:
@@ -47,9 +49,13 @@ def futures(update: Update, context: CallbackContext) -> None:
 def handle_leverage(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     leverage = update.message.text
-    user_state[user_id]['leverage'] = leverage
+    if not leverage.isdigit() or int(leverage) <= 0:
+        update.message.reply_text('Please enter a valid leverage (positive integer).')
+        return
+
+    user_state[user_id]['leverage'] = int(leverage)
     coin = user_state[user_id].get('coin')
-    
+
     if user_state[user_id].get('type') == 'futures':
         update.message.reply_text(f'Setting leverage to {leverage}x for {coin}. How much do you want to buy?')
     else:
@@ -62,17 +68,25 @@ def handle_amount(update: Update, context: CallbackContext) -> None:
     trade_type = user_state[user_id].get('type')
 
     try:
+        amount = float(amount)
+        if amount <= 0:
+            raise ValueError('Amount must be positive.')
+
         if trade_type == 'futures':
             leverage = user_state[user_id].get('leverage')
             exchange.fapiPrivate_post_leverage({'symbol': coin.replace('/', ''), 'leverage': leverage})
-            exchange.create_market_buy_order(coin, amount) 
+            exchange.create_market_buy_order(coin, amount)
             update.message.reply_text(f'Bought {amount} of {coin} on futures with {leverage}x leverage.')
         else:
-            exchange.create_market_buy_order(coin, amount) 
-            update.message.reply_text(f'Bought {amount} of {coin} on spot market.')
+            exchange.create_market_buy_order(coin, amount)
+            update.message.reply_text(f'Bought {amount} of {coin} on the spot market.')
+
     except Exception as e:
         update.message.reply_text(f'Error: {e}')
-
+    finally:
+        
+        if user_id in user_state:
+            del user_state[user_id]
 
 def main():
     updater = Updater(TELEGRAM_TOKEN)
